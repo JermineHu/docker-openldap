@@ -1,121 +1,61 @@
-docker-openldap
+OpenLDAP Server
 ===============
 
-The image is based on alpine .  
-The Dockerfile is inspired by
-[dinkel/openldap](https://hub.docker.com/r/dinkel/openldap/)
+Configuration
+-------------
 
-NOTE: On purpose, there is no secured channel (TLS/SSL), because I believe that
-this service should never be exposed to the internet, but only be used directly
-by other Docker containers using the `--link` option.
+OpenLDAP server in Ubuntu default configuration. Initial setup is
+configured though environment variables.
 
-Usage
------
+Environment Variables:
+- `DOMAIN` (mandatory) 
+    Your domain name, e.g. `example.org`. The distinguish name is created from this domain, e.g. as `cn=example,cn=org`.
+- `PASSWORD` (optional) 
+    Administrator password, account is derieved from DOMAIN, e.g. `cn=admin,dc=example,dc=org`.
+    If not given, a password is generated and written to docker logs.
+- `DEBUG` (optional) 
+    Specifies the debug level, defaults to 0 (no debug output)
 
-The most simple form would be to start the application like so (however this is
-not the recommended way - see below):
+Ports:
+- 389 (LDAP and LDAP+startTLS)
+- 636 (LDAP+SSL)
 
-    docker run -d -p 389:389 -e SLAPD_PASSWORD=mysecretpassword -e SLAPD_DOMAIN=ldap.example.org jermine/openldap
-
-To get the full potential this image offers, one should first create a data-only
-container (see "Data persistence" below), start the OpenLDAP daemon as follows:
-
-    docker run -d --name openldap --volumes-from your-data-container jermine/openldap
-
-An application talking to OpenLDAP should then `--link` the container:
-
-    docker run -d --link openldap:openldap image-using-openldap
-
-The name after the colon in the `--link` section is the hostname where the
-OpenLDAP daemon is listening to (the port is the default port `389`).
-
-Configuration (environment variables)
--------------------------------------
-
-For the first run, one has to set at least the first two environment variables.
-After the first start of the image (and the initial configuration), these
-envirnonment variables are not evaluated again.
-
-* `SLAPD_PASSWORD` (required) - sets the password for the `admin` user.
-* `SLAPD_DOMAIN` (required) - sets the DC (Domain component) parts. E.g. if one sets
-it to `ldap.example.org`, the generated base DC parts would be `...,dc=ldap,dc=example,dc=org`.
-* `SLAPD_ORGANIZATION` (defaults to $SLAPD_DOMAIN) - represents the human readable
-company name (e.g. `Example Inc.`).
-* `SLAPD_CONFIG_PASSWORD` - allows password protected access to the `dn=config`
-branch. This helps to reconfigure the server without interruption (read the
-[official documentation](http://www.openldap.org/doc/admin24/guide.html#Configuring%20slapd)).
-* `SLAPD_ADDITIONAL_SCHEMAS` - loads additional schemas provided in the `slapd`
-package that are not installed using the environment variable with comma-separated
-enties. As of writing these instructions, there are the following additional schemas
-available: `collective`, `corba`, `duaconf`, `dyngroup`, `java`, `misc`, `openldap`,
-`pmi` and `ppolicy`.
-* `SLAPD_ADDITIONAL_MODULES` - comma-separated list of modules to load. It will try
-to run `.ldif` files with a corresponsing name from the `module` directory.
-Currently only `memberof` and `ppolicy` are avaliable.
+Volumes:
+- `/var/lib/ldap` the database
+- `/ssl` mount from let's encrypt configuration `/etc/letsencrypt` to enable tls and ssl
+- `/etc/ldap` config file
+- `/var/backups` backups
+- `/var/restore` copy one backup file here to start restore on next restart
 
 
-### Setting up ppolicy
+Example
+-------
 
-The ppolicy module provides enhanced password management capabilities that are
-applied to non-rootdn bind attempts in OpenLDAP. In order to it, one has to load
-both the schema `ppolicy` and the module `ppolicy`:
-
+Start your openLDAP server:
 ```
--e SLAPD_DOMAIN=ldap.example.org -e SLAPD_ADDITIONAL_SCHEMAS=ppolicy -e SLAPD_ADDITIONAL_MODULES=ppolicy`
+docker run -it --rm --name openldap \
+           -p 389:389 \
+           -e DEBUG_LEVEL=1 \
+           -e DOMAIN=my-company.com \
+           -e ORGANIZATION="My Company" \
+           -e PASSWORD=1234567890 \
+           jermine/openldap
 ```
 
-There is one additional environment variable available:
+Now you can access your LDAP, e.g. through apache directory studio.
 
-* `SLAPD_PPOLICY_DN_PREFIX` - (defaults to `cn=default,ou=policies`) sets the dn
-prefix used in `modules/ppolicy.ldif` for the `olcPPolicyDefault` attribute.  The
-value used for `olcPPolicyDefault` is derived from `$SLAPD_PPOLICY_DN_PREFIX,(dc
-component parts from $SLAPD_DOMAIN)`.
+To access `cn=config`, set `cn=config` as root and use the administrator account for binding, here `cn=admin,dc=my-company,dc=com` and password `1234567890`.
 
-After loading the module, you have to load a default password policy, assuming you are on a host that has the client side tools installed (maybe you have to change the hostname as well):
 
-```
-ldapadd -h localhost -x -c -D 'cn=admin,dc=ldap,dc=example,dc=org' -w [$SLAPD_PASSWORD] -f default-policy.ldif
-```
+Restore a Backup
+----------------
 
-The contents of `default-policy.ldif` should look something like this:
+You can create backups easily in `data.ldif`:
 
-```
-# Define password policy
-dn: ou=policies,dc=ldap,dc=example,dc=org
-objectClass: organizationalUnit
-ou: policies
+    slapcat -l data.ldif
 
-dn: cn=default,ou=policies,dc=ldap,dc=example,dc=org
-objectClass: applicationProcess
-objectClass: pwdPolicy
-cn: default
-pwdAllowUserChange: TRUE
-pwdAttribute: userPassword
-pwdCheckQuality: 1
-# 7 days
-pwdExpireWarning: 604800
-pwdFailureCountInterval: 0
-pwdGraceAuthNLimit: 0
-pwdInHistory: 5
-pwdLockout: TRUE
-# 30 minutes
-pwdLockoutDuration: 1800
-# 180 days
-pwdMaxAge: 15552000
-pwdMaxFailure: 5
-pwdMinAge: 0
-pwdMinLength: 6
-pwdMustChange: TRUE
-pwdSafeModify: FALSE
-```
+To restore the backup file, copy a file named to match `*data.ldif` in the volume `/var/restore`, then restart the container.
 
-See the [docs](http://www.zytrax.com/books/ldap/ch6/ppolicy.html) for descriptions
-on the available attributes and what they mean.
+After successful restore, the file will be moved to volume `/var/backups/<date>-restored-data.ldif`.
 
-## Data persistence
-
-The image exposes two directories (`VOLUME ["/etc/openldap", "/var/lib/openldap"]`).
-The first holds the "static" configuration while the second holds the actual
-database. Please make sure that these two directories are saved (in a data-only
-container or alike) in order to make sure that everything is restored after a
-restart of the container.
+Before every restart, a backup is generated in `/var/backups/<date>-startup-data.ldif`.
