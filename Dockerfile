@@ -49,12 +49,13 @@ ADD samba.schema /etc/openldap/schema/samba.schema
 HEALTHCHECK --interval=60s --timeout=10s --start-period=600s --retries=3 CMD /health.sh
 
 #Set user group
+RUN chmod +x /run.sh /health.sh ;\
+    apk add --no-cache openldap openldap-clients openldap-back-$backend ${overlays} ;\
+    rm -rf /var/cache/apk/* ;\
+    mkdir /run/openldap ;\
+    chown $USER.$GROUP /run/openldap 
 RUN addgroup -g $SHARED_GROUP_ID $SHARED_GROUP_NAME
 RUN addgroup $USER $SHARED_GROUP_NAME
-RUN apk add --no-cache openldap openldap-clients openldap-back-$backend ${overlays} ;\
-    mkdir /run/openldap ;\
-    chown $USER.$GROUP /run/openldap ;\
-    rm -rf /var/cache/apk/*
 
 EXPOSE 389
 EXPOSE 636
